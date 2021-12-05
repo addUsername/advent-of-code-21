@@ -6,7 +6,7 @@
 
 #include "cuda_runtime.h"
 
-__global__ void bingo(int * numbers[], char ** boards, int * finish, int numbersMaxLength, int LINE_LENGTH){
+__global__ void bingo(int * numbers[], int ** boards, int * finish, int numbersMaxLength, int LINE_LENGTH){
 
     __shared__ int shared;
     // printf("\n thread %d\n", threadIdx.x);
@@ -14,7 +14,7 @@ __global__ void bingo(int * numbers[], char ** boards, int * finish, int numbers
     int idxFinish = idxStart + 5;
     int numOfAppears = 0;
     int round = 5;
-    char * line;
+    int * line[5];
     int count = 0;
 
     if(0 != threadIdx.x ){
@@ -25,10 +25,11 @@ __global__ void bingo(int * numbers[], char ** boards, int * finish, int numbers
 
         for(int j=round; j<=round ;j++ ){
             for(int i = idxStart; i < idxFinish; i++){
-                line = boards[i];
+                //line = boards[i];
                 for (int k = 0; k <LINE_LENGTH; k++){
                     
-                    printf("%c", boards[i][k]);
+                    printf("  %d ", &boards[i][j]);
+                    //printf(" %d",*numbers[k]);
                     
                     // Here i should check if number exists in row
                 }
@@ -36,7 +37,7 @@ __global__ void bingo(int * numbers[], char ** boards, int * finish, int numbers
                 //
             }
             printf("\nNumber -> :");
-            printf(" %d",numbers[0][0]);
+            
             return;
         }
         round++;
@@ -61,8 +62,8 @@ int main() {
 
     int const NUMBER_OF_BOARDS = 3;
     int const LENGTH_ROW = 15;
-    int NUMBERS_COUNT = 0;
-    int NUMBER_ROWS = 0;
+    int NUMBERS_COUNT = 0; //??
+    int NUMBER_ROWS = 0;   //??
     cudaError_t err;
 
     //---------------READING FILE----------------
@@ -103,8 +104,7 @@ int main() {
     //---------------GETTING NUMBERS----------------
     int numbers[100];
 	int init_size = strlen(b[0]);
-	char delim[] = ",";
-	char *ptr = strtok(b[0], delim);
+	char *ptr = strtok(b[0], ",");
 
     int j = 0;
     for(j = 0; true; j++){        
@@ -112,10 +112,9 @@ int main() {
             break;
         }
         numbers[j] = atoi(ptr);
-        ptr = strtok(NULL, delim);
+        ptr = strtok(NULL, ",");
     }
     NUMBERS_COUNT = j;
-    printf("TESST 1 : %d", numbers[0]);
     //---------------MALLOC NUMBERS----------------  
     int *ptrNumbers[NUMBERS_COUNT];
     int **_totalNumbers;
@@ -143,27 +142,44 @@ int main() {
             printf("%s",cudaGetErrorString(err));
             return -1;            
     }
+    //---------------GETTING BOARD-----------------
+    int *boards[NUMBER_ROWS];
+    int aux[5];
+    for (int j=0; j < NUMBER_ROWS-1; j++){
+        ptr = strtok(b[j+1], " ");
+        if(ptr == NULL){
+                break;
+        }
+        boards[j] = (int*) malloc(5*sizeof(int));
+        for ( i = 0; i<5; i++){
+
+            memcpy(*boards[j][i], atoi(ptr), 5*sizeof(int));
+        }
+        
+        
+       //printf("%d", &boards[0][0]);
+    }
     
     //---------------MALLOC BOARDS----------------
-    char *ptrDevice[NUMBER_ROWS];
-    char **_total;
+    int *ptrDevice[NUMBER_ROWS];
+    int **_total;
     for (int i = 0; i< NUMBER_ROWS-1; i++){
 
-        err = cudaMalloc((void **)&ptrDevice[i], LENGTH_ROW);
+        err = cudaMalloc((void **)&ptrDevice[i], LENGTH_ROW * sizeof(int));
         if (err != 0) {
             printf("error allocating");
             printf("%s",cudaGetErrorString(err));
             return -1;            
         }
     
-        err = cudaMemcpy(ptrDevice[i], b[i+1], LENGTH_ROW, cudaMemcpyHostToDevice);
+        err = cudaMemcpy(ptrDevice[i], &boards[i], LENGTH_ROW * sizeof(int), cudaMemcpyHostToDevice);
         if (err != 0) {
             printf("error copying ptrDevice[i] ");
             printf("%s",cudaGetErrorString(err));
             return -1;            
         }        
     }
-    cudaMalloc((void ***)&_total, LENGTH_ROW*NUMBER_ROWS*sizeof(char));
+    cudaMalloc((void ***)&_total, LENGTH_ROW*NUMBER_ROWS*sizeof(int));
     err = cudaMemcpy(_total, ptrDevice, LENGTH_ROW*NUMBER_ROWS*sizeof(char), cudaMemcpyHostToDevice);
     if (err != 0) {
             printf("error copying _total");
