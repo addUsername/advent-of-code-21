@@ -3,8 +3,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>       // for clock_t, clock(), CLOCKS_PER_SEC
 
 #define NUMBER_CRABS 1000
+#define WORK_FOR_THREAD 10 //benchmark says this is best
+#define ANS1 false
 
 int readFileAsStrings(char* filename, char* lines);
 void check(cudaError_t err, char *mssg);
@@ -19,31 +22,30 @@ __global__ void findLower(int* count, int len){
                 position = i;
             }
         }
-    printf("\nbest pos=%d, min=%d\n",position, min);
-    
+    printf("\nbest pos=%d, min=%d\n",position, min);    
 }
-__global__ void getSum(int crabs[], int* count){
 
-    //printf("\n t %d | block %d | dim %d",threadIdx.x,blockIdx.x,blockDim.x);
+__global__ void getSum(int crabs[], int* count){
     
-    int idxStart = 100 * threadIdx.x;
-    int idxFinish = idxStart + 100;
+    int idxStart = WORK_FOR_THREAD * threadIdx.x;
+    int idxFinish = idxStart + WORK_FOR_THREAD;
     int position = blockIdx.x;
     int incr = 0;
-   // printf("\n%d idxS | idxF %d \n",idxStart,idxFinish);
     
     int a = 0;
     for(int i = idxStart; i < idxFinish; i++){
 
         a = position - crabs[i];
-        incr +=  (a > 0)? a : -1*a;
-      //  printf("\n%d a | incr %d \n",a,incr);
-    }  
-     __syncthreads();
-    atomicAdd(&count[position],incr);
-    //printf("%d crabs[position] | count %d |  | incr %d\n",crabs[idxStart], count[position],incr);
-    __syncthreads();
+        a = (a > 0)? a: -1*a;
 
+        if(ANS1){
+            incr += a;
+        }else{
+            incr += (a*(1 + a))/2; // ty Gauss
+        }        
+    }
+    atomicAdd(&count[position],incr);
+    __syncthreads();
 }
 
 int main() {
@@ -77,10 +79,16 @@ int main() {
     int *d_count;
     check( cudaMalloc( (void **)&d_count, max*sizeof(float)),"d_count" );
     check( cudaMemset(d_count, 0, max*sizeof(float)), "count");
-        
-    getSum<<<max,NUMBER_CRABS/100>>>(d_lines, d_count);
+    
+    clock_t begin = clock();
+
+    getSum<<<max,NUMBER_CRABS/WORK_FOR_THREAD>>>(d_lines, d_count);
     cudaDeviceSynchronize();
+
+    clock_t end = clock();
     findLower<<<1,1>>>(d_count,max);
+
+    printf("The elapsed time is %f seconds", (double)(end - begin) / CLOCKS_PER_SEC);
 
     cudaFree(d_lines);
     cudaDeviceSynchronize();
