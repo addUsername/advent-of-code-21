@@ -1,31 +1,47 @@
 #include <unistd.h>
-#include <sys/mman.h>   /* For open(), creat()   */
+#include <sys/mman.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
-#define NUMBER_OF_DAYS 9
+#define NUMBER_OF_DAYS 256
+#define NUMBER_OF_GROUPS 9
 #define TWO 2
 
 int readFileAsStrings(char* filename, char* lines);
-void check(cudaError_t err);
+void check(cudaError_t err, char *mssg);
 
-__global__ void drawMoves(char * input, int length, int** output){
+__global__ void addDays(long** output){
 
-    int a = (int) input[0];
+    int nextDayChild = 0;
 
-    int const day = threadIdx.x;
-    int const ascciValue = 48 + threadIdx.x;
-    output[day][0] = day;
-    output[day][1] = 0;
+    for (int i = 0; i<NUMBER_OF_DAYS; i++){
+        for (int day = 0; day<9; day++){
+            if ( output[day][0] == 0){
+                output[day][0] = 8;
+                nextDayChild =(day + 7 > 8 )? day - 2 : day + 7 ;
+                output[nextDayChild][1] += output[day][1];
+            }else{
+                output[day][0] -= 1;
+            }
+        }
+    }
+    long sum = 0;
+    for(int i = 0; i<9; i++){
+        sum += output[i][1];
+    }
+    printf("\nout: %ld ",sum);
+}
+__global__ void drawMoves(char * input, int length, long **output){
+
+    int day = threadIdx.x;
+    int ascciValue = 48 + threadIdx.x;
 
     for (int i = 0; i <length; i++){
         if ((int) input[i] == ascciValue){
-            output[threadIdx.x][0] += 1;
+            output[threadIdx.x][1] += 1;
         } 
     }
-
-    printf("finish");
     __syncthreads();
     
    return;
@@ -41,34 +57,41 @@ int main() {
     
     //-----------------Malloc input---------------------------------------------
     char* d_lines;
-    check( cudaMalloc((char**)&d_lines, lenLine * sizeof(char)));
-    check( cudaMemcpy(d_lines, lines, lenLine * sizeof(char), cudaMemcpyHostToDevice ));
+    check( cudaMalloc((char**)&d_lines, lenLine * sizeof(char)), "&d_lines");
+    check( cudaMemcpy(d_lines, lines, lenLine * sizeof(char), cudaMemcpyHostToDevice ), "d_lines");
 
     free(lines);
     //-----------------Malloc output-------------------------------------------
     // array[9][2] -> 9 = total of groups order by its current day before creating another fish
     //                2 = first -> current day / second -> num of fishes
-    int h_fish[NUMBER_OF_DAYS][TWO];
+    typedef long nRarray[NUMBER_OF_GROUPS][TWO];
+    nRarray *d_total;
 
-    int *ptrDevice[NUMBER_OF_DAYS];
-    int **_total;
-    for (int i = 0; i< NUMBER_OF_DAYS; i++){
-
-        check( cudaMalloc( (void **)&ptrDevice[i], TWO * sizeof(int)));        
+    long *ptrDevice[NUMBER_OF_GROUPS];
+    long **_total;
+    for (int i = 0; i< NUMBER_OF_GROUPS; i++){
+        long b[2] = {i,0};
+        check( cudaMalloc( (void **)&ptrDevice[i], TWO * sizeof(long)), "&ptrDevice");
+        check( cudaMemcpy(ptrDevice[i], b, TWO*sizeof(long), cudaMemcpyHostToDevice), "ptrDevice" );       
     }
-    check( cudaMalloc((void ***)&_total, NUMBER_OF_DAYS*TWO*sizeof(int)));
-    check( cudaMemcpy(_total, ptrDevice, NUMBER_OF_DAYS*TWO*sizeof(int), cudaMemcpyHostToDevice));
+    check( cudaMalloc((void ***)&_total, NUMBER_OF_GROUPS*TWO*sizeof(long)), "&_total");
+    check( cudaMemcpy(_total, ptrDevice, NUMBER_OF_GROUPS*TWO*sizeof(long), cudaMemcpyHostToDevice), "ptrDevice" );
     
     //-----------------Exec -----------------------
-    drawMoves<<<1, NUMBER_OF_DAYS>>>(d_lines, lenLine, _total);
+    drawMoves<<<1, NUMBER_OF_GROUPS>>>(d_lines, lenLine, _total);
     cudaDeviceSynchronize();
+    cudaFree(d_lines);
+
+    addDays<<<1,1>>>(_total);
+    cudaDeviceSynchronize();
+    cudaFree(_total);
 
     return 0;
 }
 
-void check(cudaError_t err){
+void check(cudaError_t err, char* mssg){
     if (err != 0) {
-        printf("error copying/malloc ");
+        printf("error copying/malloc :%s\n", mssg);
         printf("%s",cudaGetErrorString(err));
         exit(err);           
     }
@@ -91,12 +114,6 @@ int readFileAsStrings(char* filename, char* lines){
        
         if (read == -1 || strlen(line) < 2){
             exit(EXIT_FAILURE);
-        }
-
-        //lines = (char*) malloc(strlen(line));        
-        if (lines  == NULL) {
-            printf("unable to allocate memory \n");
-            return -1;
         }
         strcpy(lines, line);
         
