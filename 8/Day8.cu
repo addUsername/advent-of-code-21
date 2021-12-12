@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>       // for clock_t, clock(), CLOCKS_PER_SEC
-
+#include <math.h>
 /* aaaa
   b    c
   b    c  
@@ -13,10 +13,10 @@
   e    f
    gggg */
 
-#define NUMBER_IN 200 //10
+#define NUMBER_IN 10 //10
 #define LO 4 //# of digits for the output
 #define LI 10
-#define ANS1 true
+#define ANS1 false
 
 
 int readFileAsStrings(char* filename, char* lines[]);
@@ -159,9 +159,7 @@ __global__ void getSum(char* d_in){
 // by using the ordered input array get the output
 __global__ void transcribe(char* d_in, int* d_out){
 
-   
     int idx = threadIdx.x;
-    
     for(int i = LI; i<(LO+LI); i++){
         for(int j = 0; j<(LI); j++){
 
@@ -169,9 +167,34 @@ __global__ void transcribe(char* d_in, int* d_out){
             if ( strcmp(d_in+(((LO+LI)*idx + j)*10), d_in+(((LO+LI)*idx + i)*10))){
                 atomicAdd(&d_out[j],1);
                 break;
+
             }
         }
     }
+}
+// For ans2
+__global__ void transcribe2(char* d_in, int* d_out){
+
+   
+    int idx = threadIdx.x;    
+    int number = 10;
+    int exp = 3;
+
+    for(int i = LI; i<(LO+LI); i++){
+        for(int j = 0; j<(LI); j++){
+
+            // gl, index are hard in a flattened array
+            if ( strcmp(d_in+(((LO+LI)*idx + j)*10), d_in+(((LO+LI)*idx + i)*10))){
+                number +=(int) pow(10,exp) * j ;
+                exp--;
+                break;
+            }
+        }
+    }
+    printf("%d ",number);
+    atomicAdd(&d_out[0],number);
+    __syncthreads();
+    printf("\nResult= %d ",d_out[0]);
 }
 
 
@@ -179,7 +202,7 @@ int main() {
     //-----------------Read file-----------------------------------------------    
     char *lines[NUMBER_IN];
     
-    int lenLine = readFileAsStrings("input.txt", lines);
+    int lenLine = readFileAsStrings("inputa.txt", lines);
     //-----------------Parse text----------------------------------------------
     // Next time this will be flat (1D) from the beginning   
     char *h_lines[NUMBER_IN][LO+LI];
@@ -221,37 +244,42 @@ int main() {
 
     free(h_in);
 
-    clock_t begin = clock();
-
     //---------------Order asc input array---------------------------------------
+    clock_t begin = clock();
     getSum<<<1,NUMBER_IN>>>(d_in);
     cudaDeviceSynchronize();
 
-    //--------------Malloc output------------------------------------------------
     int* h_out = (int*) calloc(10,sizeof(int));
     int* d_out;
     check( cudaMalloc(&d_out,10*sizeof(int) ),"d_out");
     check( cudaMemcpy(d_out, h_out,10*sizeof(int),cudaMemcpyHostToDevice),"h_out");
 
-    printf("\n trancribe()");
+    if(ANS1){
+        // This can be improved, just one thread for value..
+        transcribe<<<1,NUMBER_IN>>>(d_in, d_out);
+        cudaDeviceSynchronize();
+        
+        check( cudaMemcpy(h_out, d_out,10*sizeof(int),cudaMemcpyDeviceToHost ),"h_out" );
 
-    // This can be improved, just one thread for value..
-    transcribe<<<1,NUMBER_IN>>>(d_in, d_out);
-    cudaDeviceSynchronize();
-    
-    check( cudaMemcpy(h_out, d_out,10*sizeof(int),cudaMemcpyDeviceToHost ),"h_out" );
+       
+        printf("\nAns1 -> %d",h_out[1]+h_out[8]+h_out[7]+h_out[4]);
 
-    clock_t end = clock();
+        free(h_out);
+        cudaFree(d_out);
+    }else{
 
-    for(int i = 0; i<10; i++){
-        printf("%d ",h_out[i]);
+        transcribe2<<<1,NUMBER_IN>>>(d_in, d_out);
+        cudaDeviceSynchronize();
+        
+        check( cudaMemcpy(h_out, d_out,10*sizeof(int),cudaMemcpyDeviceToHost ),"h_out" );
+
+        printf("%d",d_out[1]);
     }
-    printf("\nAns1 -> %d",h_out[1]+h_out[8]+h_out[7]+h_out[4]);
-
+    clock_t end = clock();
     printf("\nThe elapsed time is %f seconds", (double)(end - begin) / CLOCKS_PER_SEC);
-    free(h_out);
+       
+        
     cudaFree(d_in);
-    cudaFree(d_out);
     cudaDeviceReset();
     return 0;
 }
