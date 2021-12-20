@@ -7,19 +7,23 @@
 
 #define L 10
 #define STEPS 100
+#define ANS1 false
 
 int readFileAsStrings(char* filename, char* lines[]);
 void check(cudaError_t err, char *mssg);
 
 __device__ int sum; // var defined in __device__ persists between kernel calls
+__device__ int total_zeros; // part 2
+
 __shared__ bool flag; // this thing resets
 
-__global__ void doStep(int* d_in){
+__global__ void doStep(int* d_in, int* d_out){
 
     
     int idx = threadIdx.x;
     int row = idx / L;
     if(idx == 0) flag = true;
+    if(idx == 0) total_zeros = 0;
     __syncthreads();    // play with this sync here, it varies the output by a lot
 
     bool t_flag = false;
@@ -63,7 +67,14 @@ __global__ void doStep(int* d_in){
 
         //if(idx == 0) printf("\n 1 more\n");
     }
-    if(t_flag) d_in[idx] = 0;
+    if(t_flag) {
+        atomicAdd(&total_zeros,1);
+        d_in[idx] = 0;
+    }
+    if(idx == 0){
+        d_out[0] = total_zeros;
+    }
+
 }
 
 __global__ void show(int* d_in){
@@ -101,16 +112,31 @@ int main() {
     check( cudaMalloc((int**)&d_in, L*L*sizeof(int)),"&d_in");
     check( cudaMemcpy(d_in, h_in, L*L*sizeof(int), cudaMemcpyHostToDevice),"d_in");
     free(h_in);
+
+    int* h_out = (int *) malloc(sizeof(int));
+    int* d_out;
+    check( cudaMalloc((int**)&d_out, sizeof(int)),"&d_out");
     //----------------run()-----------------------------------
     clock_t begin = clock();
    
-    for(int i =0; i<STEPS; i++){
-        doStep<<<1,L*L>>>(d_in);
+    if(ANS1){
+        for(int i =0; i<STEPS; i++){
+            doStep<<<1,L*L>>>(d_in, d_out);
+            cudaDeviceSynchronize();            
+        }
+        show<<<1,1>>>(d_in);
         cudaDeviceSynchronize();
+    }else{
+            for(int i =0;; i++){
+            doStep<<<1,L*L>>>(d_in, d_out);
+            cudaDeviceSynchronize();
+            check( cudaMemcpy( h_out, d_out, sizeof(int), cudaMemcpyDeviceToHost ),"&d_out");
+            if(h_out[0] == 100){
+                printf("\nANS2 = %d",i);
+                break;
+            }
+        }
     }
-    
-    show<<<1,1>>>(d_in);
-    cudaDeviceSynchronize();
         
     clock_t end = clock();
     printf("\nThe elapsed time is %f seconds", (double)(end - begin) / CLOCKS_PER_SEC);       
